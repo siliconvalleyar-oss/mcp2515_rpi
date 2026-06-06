@@ -9,6 +9,7 @@
 #include "../core/protocol_router.hpp"
 #include "../core/session_manager.hpp"
 #include "../core/can_manager.hpp"
+#include "../simulation/vehicle_profile.hpp"
 
 namespace ecumult {
 
@@ -117,6 +118,19 @@ public:
     virtual float getDistanceWithMIL();
     virtual float getDistanceSinceCodeClear();
 
+    // Odometer
+    virtual void setOdometer(float km);
+    virtual float getOdometer() const;
+    virtual float getTripOdometer() const;
+    virtual void incrementOdometer(float km);
+    virtual void resetTrip();
+
+    // Vehicle profile
+    virtual VehicleProfileManager& getProfileManager();
+    virtual bool setProfile(const std::string& name);
+    virtual std::vector<std::string> getAvailableProfiles() const;
+    virtual bool applyProfileDTCs();
+
     // Setters for simulation
     virtual void setEngineRPM(float rpm);
     virtual void setVehicleSpeed(float speed);
@@ -165,6 +179,13 @@ protected:
     float run_time_;
     float distance_with_mil_;
     float distance_since_clear_;
+
+    // Odometer
+    float odometer_km_;
+    float trip_km_;
+
+    // Vehicle profile
+    VehicleProfileManager profile_manager_;
 
     std::string vin_;
     CalibrationInfo calibration_;

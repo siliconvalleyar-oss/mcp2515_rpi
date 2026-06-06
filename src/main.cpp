@@ -3,6 +3,7 @@
 #include <csignal>
 #include <atomic>
 #include <fstream>
+#include <sstream>
 #include <nlohmann/json.hpp>
 
 #include "core/can_manager.hpp"
@@ -27,6 +28,7 @@
 #include "simulation/sensor_simulator.hpp"
 #include "simulation/fault_injector.hpp"
 #include "simulation/environment.hpp"
+#include "simulation/vehicle_profile.hpp"
 #include "api/rest_api.hpp"
 #include "api/websocket.hpp"
 #include "api/grpc_server.hpp"
@@ -142,6 +144,22 @@ int main(int argc, char* argv[]) {
     MetricsExporter metrics;
     ReplayAnalyzer replay;
 
+    // Initialize simulation profiles
+    VehicleProfileManager profile_manager;
+    std::string default_profile = config.value("simulation", json()).value("profile", "normal");
+    if (!profile_manager.selectProfile(default_profile)) {
+        profile_manager.selectProfile("normal");
+    }
+    std::cout << "[Main] Profile: " << profile_manager.getCurrentProfile()->name
+              << " - " << profile_manager.getCurrentProfile()->description << std::endl;
+
+    // Initialize odometer from config
+    auto& sim_cfg = config["simulation"];
+    if (sim_cfg.contains("odometer") && sim_cfg["odometer"].contains("initial_km")) {
+        float init_odo = sim_cfg["odometer"]["initial_km"].get<float>();
+        router->getCurrentImplementation()->setOdometer(init_odo);
+    }
+
     // Initialize API servers
     auto rest_api = std::make_shared<RESTAPI>(router, db_manager, "0.0.0.0", 8080);
     auto ws_server = std::make_shared<WebSocketServer>("0.0.0.0", 8081, 100);
@@ -164,6 +182,137 @@ int main(int argc, char* argv[]) {
     rest_api->start();
     ws_server->start();
 
+    // Simulation state (must be before lambdas that capture by ref)
+    float sim_time = 0;
+    float odo_accum = 0;
+
+    // REST API route handler for profile and odometer endpoints
+    rest_api->setRouteHandler(
+        [&](const std::string& path, const std::string& method,
+            const std::string& body,
+            const std::unordered_map<std::string, std::string>& params) -> std::string {
+
+        try {
+            // === Health / Status ===
+            if (path == "/" || path == "/health") {
+                json resp;
+                resp["status"] = "ok";
+                resp["service"] = "ECU Multi-Emulator";
+                resp["version"] = "1.0.0";
+                resp["profile"] = profile_manager.getCurrentProfile()
+                    ? profile_manager.getCurrentProfile()->name : "none";
+                resp["uptime_seconds"] = sim_time;
+                return resp.dump();
+            }
+
+            // === GET /profile -> current profile info ===
+            if (path == "/profile" && method == "GET") {
+                auto* prof = profile_manager.getCurrentProfile();
+                if (!prof) return std::string{};
+                json resp;
+                resp["name"] = prof->name;
+                resp["description"] = prof->description;
+                resp["unstable_idle"] = prof->unstable_idle;
+                resp["rpm_idle"] = {prof->rpm_idle_min, prof->rpm_idle_max};
+                resp["active_dtcs"] = json::array();
+                for (auto code : prof->active_dtcs) {
+                    resp["active_dtcs"].push_back(code);
+                }
+                return resp.dump();
+            }
+
+            // === GET /profiles -> list available profiles ===
+            if (path == "/profiles" && method == "GET") {
+                json resp = json::array();
+                for (const auto& name : profile_manager.getAvailableProfiles()) {
+                    resp.push_back(name);
+                }
+                return resp.dump();
+            }
+
+            // === POST /profile -> switch profile ===
+            if (path == "/profile" && method == "POST") {
+                json req = json::parse(body);
+                std::string name = req.value("name", "normal");
+                if (!profile_manager.selectProfile(name)) {
+                    json err;
+                    err["error"] = "Unknown profile: " + name;
+                    return err.dump();
+                }
+                // Sync to manufacturer
+                auto* impl = router->getCurrentImplementation();
+                if (impl) {
+                    impl->setProfile(name);
+                }
+                json resp;
+                resp["status"] = "ok";
+                resp["profile"] = name;
+                return resp.dump();
+            }
+
+            // === GET /odometer ===
+            if (path == "/odometer" && method == "GET") {
+                auto* impl = router->getCurrentImplementation();
+                if (!impl) return std::string{};
+                json resp;
+                resp["odometer_km"] = impl->getOdometer();
+                resp["trip_km"] = impl->getTripOdometer();
+                return resp.dump();
+            }
+
+            // === POST /odometer -> set odometer value ===
+            if (path == "/odometer" && method == "POST") {
+                auto* impl = router->getCurrentImplementation();
+                if (!impl) return std::string{};
+                json req = json::parse(body);
+                if (req.contains("odometer_km")) {
+                    impl->setOdometer(req["odometer_km"].get<float>());
+                }
+                if (req.contains("reset_trip") && req["reset_trip"].get<bool>()) {
+                    impl->resetTrip();
+                }
+                json resp;
+                resp["status"] = "ok";
+                resp["odometer_km"] = impl->getOdometer();
+                resp["trip_km"] = impl->getTripOdometer();
+                return resp.dump();
+            }
+
+            // === GET /dtcs -> current DTCs ===
+            if (path == "/dtcs" && method == "GET") {
+                auto* impl = router->getCurrentImplementation();
+                if (!impl) return std::string{};
+                auto dtcs = impl->getDTCs(params.count("all") ? false : true);
+                json resp = json::array();
+                for (const auto& dtc : dtcs) {
+                    json item;
+                    item["code"] = dtc.code;
+                    item["description"] = dtc.description;
+                    item["pending"] = dtc.is_pending;
+                    resp.push_back(item);
+                }
+                return resp.dump();
+            }
+
+            // === POST /dtcs/clear ===
+            if (path == "/dtcs/clear" && method == "POST") {
+                auto* impl = router->getCurrentImplementation();
+                if (!impl) return std::string{};
+                impl->clearDTCs();
+                json resp;
+                resp["status"] = "ok";
+                return resp.dump();
+            }
+
+        } catch (const std::exception& e) {
+            json err;
+            err["error"] = e.what();
+            return err.dump();
+        }
+
+        return std::string{}; // 404 sent by caller
+    });
+
     // WebSocket update generator
     ws_server->setUpdateGenerator([&]() -> std::string {
         json update;
@@ -177,12 +326,15 @@ int main(int argc, char* argv[]) {
         update["battery"] = sensor_sim.getBatteryVoltage();
         update["intake_pressure"] = sensor_sim.getIntakePressure();
         update["fuel_pressure"] = sensor_sim.getFuelPressure();
+        update["profile"] = profile_manager.getCurrentProfile()
+            ? profile_manager.getCurrentProfile()->name : "normal";
+        update["odometer_km"] = router->getCurrentImplementation()
+            ? router->getCurrentImplementation()->getOdometer() : 0;
         return update.dump();
     });
 
     // Main simulation loop
     std::cout << "\n[Main] System ready. Press Ctrl+C to stop.\n" << std::endl;
-    float sim_time = 0;
 
     while (g_running) {
         float dt = 0.05f; // 50ms simulation step
@@ -190,7 +342,10 @@ int main(int argc, char* argv[]) {
 
         // Update driving cycle
         DrivingCyclePoint cycle_pt = driving_cycle.getPoint(sim_time);
-        sensor_sim.updateDriving(cycle_pt.rpm, cycle_pt.speed, dt);
+
+        // Apply profile to RPM (e.g., unstable idle)
+        float profile_rpm = profile_manager.applyRPMProfile(cycle_pt.rpm, dt);
+        sensor_sim.updateDriving(profile_rpm, cycle_pt.speed, dt);
 
         // Update environment
         env_sim.update(dt);
@@ -206,7 +361,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Sync sensor values to active manufacturer
+        // Sync sensor values to active manufacturer (with profile overrides)
         auto* impl = router->getCurrentImplementation();
         if (impl) {
             impl->setEngineRPM(sensor_sim.getEngineRPM());
@@ -217,6 +372,15 @@ int main(int argc, char* argv[]) {
             impl->setThrottlePosition(sensor_sim.getThrottlePosition());
             impl->setFuelLevel(sensor_sim.getFuelLevel());
             impl->setBatteryVoltage(sensor_sim.getBatteryVoltage());
+
+            // Odometer: km = speed (km/h) * dt (hours)
+            float speed_kmh = std::max(0.0f, sensor_sim.getVehicleSpeed());
+            float km_per_sec = speed_kmh / 3600.0f;
+            odo_accum += km_per_sec * dt;
+            if (odo_accum >= 0.01f) {
+                impl->incrementOdometer(odo_accum);
+                odo_accum = 0;
+            }
         }
 
         // Update metrics
@@ -224,6 +388,7 @@ int main(int argc, char* argv[]) {
         metrics.gauge("ecu_vehicle_speed", sensor_sim.getVehicleSpeed());
         metrics.gauge("ecu_battery_voltage", sensor_sim.getBatteryVoltage());
         metrics.gauge("ecu_uptime_seconds", sim_time);
+        metrics.gauge("ecu_odometer_km", impl ? impl->getOdometer() : 0);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }

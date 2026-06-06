@@ -175,8 +175,47 @@ std::vector<uint8_t> ChevroletGM::readGMDID(uint16_t did) {
             for (char c : vin_) resp.push_back(c);
             return resp;
         }
+        case 0xF191: // Odometer (km)
+        {
+            uint32_t odo = static_cast<uint32_t>(odometer_km_);
+            return {0x62, 0xF1, 0x91,
+                    static_cast<uint8_t>((odo >> 24) & 0xFF),
+                    static_cast<uint8_t>((odo >> 16) & 0xFF),
+                    static_cast<uint8_t>((odo >> 8) & 0xFF),
+                    static_cast<uint8_t>(odo & 0xFF)};
+        }
+        case 0xF192: // Trip odometer (km)
+        {
+            uint16_t trip = static_cast<uint16_t>(trip_km_);
+            return {0x62, 0xF1, 0x92,
+                    static_cast<uint8_t>((trip >> 8) & 0xFF),
+                    static_cast<uint8_t>(trip & 0xFF)};
+        }
+        case 0xF193: // Active profile name
+        {
+            auto* prof = profile_manager_.getCurrentProfile();
+            std::string pname = prof ? prof->name : "normal";
+            std::vector<uint8_t> resp = {0x62, 0xF1, 0x93};
+            for (char c : pname) resp.push_back(c);
+            return resp;
+        }
         default:
+        {
+            // Check if DID corresponds to a DTC code lookup
+            if ((did & 0xFF00) == 0x1200) {
+                uint16_t dtc_code = did & 0x00FF;
+                auto dtcs = getDTCs(true);
+                for (const auto& dtc : dtcs) {
+                    if (dtc.code == dtc_code) {
+                        return {0x62, static_cast<uint8_t>((did >> 8) & 0xFF),
+                                static_cast<uint8_t>(did & 0xFF), 0x01}; // fault active
+                    }
+                }
+                return {0x62, static_cast<uint8_t>((did >> 8) & 0xFF),
+                        static_cast<uint8_t>(did & 0xFF), 0x00}; // no fault
+            }
             return {0x7F, 0x22, 0x12};
+        }
     }
 }
 

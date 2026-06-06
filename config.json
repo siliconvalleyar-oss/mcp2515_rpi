@@ -115,11 +115,18 @@
         "enabled": true,
         "driving_cycle": "urban",
         "cycles": ["urban", "highway", "mixed", "custom", "steady"],
+        "profile": "normal",
+        "profiles": ["normal", "unstable_idle", "bad_o2", "maf_fault", "coolant_fault", "misfire", "low_battery", "fuel_pressure", "emission_fail", "custom"],
         "rpm_min": 650,
         "rpm_max": 6500,
         "speed_min": 0,
         "speed_max": 200,
         "coolant_temp_normal": 95,
+        "odometer": {
+            "enabled": true,
+            "initial_km": 0,
+            "trip_enabled": true
+        },
         "fault_injection": {
             "enabled": false,
             "dtc_list": [],

@@ -74,7 +74,17 @@ scripts/diag.sh            # Interactive CAN diagnostic client
 - **SessionManager** tracks UDS diagnostic sessions with timeouts and security levels.
 - **SecurityManager** holds seed/key algorithms per manufacturer. Register with `sec.registerAlgorithm("chevrolet", 1, SecurityManager::gmAlgorithm28bit())`.
 - **DTCs** use 16-bit codes encoded as `P0101 → 0x0101`. The `DTCManager` helper handles encode/decode.
-- **config.json** is loaded at startup. Changes require restart.
+- **Vehicle Profiles** (`src/simulation/vehicle_profile.hpp/cpp`): 10 predefined profiles (`normal`, `unstable_idle`, `bad_o2`, `maf_fault`, `coolant_fault`, `misfire`, `low_battery`, `fuel_pressure`, `emission_fail`, `custom`). Each defines RPM range, unstable idle behavior, active DTCs, and PID sensor overrides (stuck values, noise, drift, min/max clamps). Use `VehicleProfileManager` (accessible via `BaseManufacturer::getProfileManager()`) to switch at runtime:
+  ```cpp
+  profile_manager.selectProfile("bad_o2");
+  auto* profile = profile_manager.getCurrentProfile();
+  float rpm = profile_manager.applyRPMProfile(base_rpm, dt);
+  float o2 = profile_manager.applySensorOverride(0x14, raw_o2, dt);
+  ```
+  Sensor overrides are applied automatically in `BaseManufacturer::handleMode01()` for OBD2 PID queries.
+- **Odometer** is integrated into `BaseManufacturer` as `odometer_km_` and `trip_km_`. Auto-incremented by the simulation loop based on vehicle speed. Read/write via API (`GET/POST /odometer`) and via GM-specific DIDs (`0xF191` = odometer, `0xF192` = trip).
+- **REST API** now parses HTTP method + path + body and dispatches to registered route handlers. Endpoints: `GET /profile`, `POST /profile`, `GET /profiles`, `GET /odometer`, `POST /odometer`, `GET /dtcs`, `POST /dtcs/clear`.
+- **config.json** `simulation` section now supports `"profile"` (default profile name) and `"odometer"` (`initial_km`).
 
 ## Cross-Compilation Notes
 

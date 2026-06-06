@@ -23,10 +23,13 @@ BaseManufacturer::BaseManufacturer(std::shared_ptr<CANManager> can_manager)
     , run_time_(0)
     , distance_with_mil_(0)
     , distance_since_clear_(0)
+    , odometer_km_(0)
+    , trip_km_(0)
     , ecu_serial_(0x12345678) {
     std::fill(o2_voltage_, o2_voltage_ + 8, 0.45f);
     setupDefaultPIDs();
     vin_ = "XXXXXXXXXXXXXXXXX";
+    applyProfileDTCs();
 }
 
 void BaseManufacturer::onManufacturerSelected(const ManufacturerConfig& cfg) {
@@ -59,18 +62,19 @@ std::vector<uint8_t> BaseManufacturer::handleMode01(uint8_t pid) {
 
     float value;
     switch (pid) {
-        case 0x0C: value = engine_rpm_; break;
-        case 0x0D: value = vehicle_speed_; break;
-        case 0x05: value = coolant_temp_; break;
-        case 0x0F: value = intake_temp_; break;
-        case 0x10: value = maf_; break;
-        case 0x11: value = throttle_pos_; break;
-        case 0x14: value = o2_voltage_[0]; break;
-        case 0x22: value = fuel_pressure_; break;
-        case 0x2F: value = fuel_level_; break;
-        case 0x04: value = timing_advance_; break;
-        case 0x0B: value = intake_pressure_; break;
-        case 0x42: value = battery_voltage_; break;
+        case 0x0C: value = profile_manager_.applySensorOverride(0x0C, engine_rpm_, 0); break;
+        case 0x0D: value = profile_manager_.applySensorOverride(0x0D, vehicle_speed_, 0); break;
+        case 0x05: value = profile_manager_.applySensorOverride(0x05, coolant_temp_, 0); break;
+        case 0x0F: value = profile_manager_.applySensorOverride(0x0F, intake_temp_, 0); break;
+        case 0x10: value = profile_manager_.applySensorOverride(0x10, maf_, 0); break;
+        case 0x11: value = profile_manager_.applySensorOverride(0x11, throttle_pos_, 0); break;
+        case 0x14: value = profile_manager_.applySensorOverride(0x14, o2_voltage_[0], 0); break;
+        case 0x15: value = profile_manager_.applySensorOverride(0x15, o2_voltage_[1], 0); break;
+        case 0x22: value = profile_manager_.applySensorOverride(0x22, fuel_pressure_, 0); break;
+        case 0x2F: value = profile_manager_.applySensorOverride(0x2F, fuel_level_, 0); break;
+        case 0x04: value = profile_manager_.applySensorOverride(0x04, timing_advance_, 0); break;
+        case 0x0B: value = profile_manager_.applySensorOverride(0x0B, intake_pressure_, 0); break;
+        case 0x42: value = profile_manager_.applySensorOverride(0x42, battery_voltage_, 0); break;
         case 0x1F: value = run_time_; break;
         case 0x21: value = distance_with_mil_; break;
         case 0x31: value = distance_since_clear_; break;
@@ -603,6 +607,73 @@ float BaseManufacturer::decodePIDValue(uint8_t pid, const std::vector<uint8_t>& 
     (void)pid;
     (void)data;
     return 0.0f;
+}
+
+// ===== Odometer =====
+
+void BaseManufacturer::setOdometer(float km) {
+    odometer_km_ = std::max(0.0f, km);
+}
+
+float BaseManufacturer::getOdometer() const {
+    return odometer_km_;
+}
+
+float BaseManufacturer::getTripOdometer() const {
+    return trip_km_;
+}
+
+void BaseManufacturer::incrementOdometer(float km) {
+    if (km > 0) {
+        odometer_km_ += km;
+        trip_km_ += km;
+    }
+}
+
+void BaseManufacturer::resetTrip() {
+    trip_km_ = 0;
+}
+
+// ===== Vehicle Profile =====
+
+VehicleProfileManager& BaseManufacturer::getProfileManager() {
+    return profile_manager_;
+}
+
+bool BaseManufacturer::setProfile(const std::string& name) {
+    if (profile_manager_.selectProfile(name)) {
+        applyProfileDTCs();
+        return true;
+    }
+    return false;
+}
+
+std::vector<std::string> BaseManufacturer::getAvailableProfiles() const {
+    return profile_manager_.getAvailableProfiles();
+}
+
+bool BaseManufacturer::applyProfileDTCs() {
+    auto* profile = profile_manager_.getCurrentProfile();
+    if (!profile) return false;
+
+    // Clear existing profile-based DTCs first (keep manually set ones)
+    for (auto it = dtcs_.begin(); it != dtcs_.end();) {
+        bool found = false;
+        for (uint16_t code : profile->active_dtcs) {
+            if (it->code == code) { found = true; break; }
+        }
+        if (found) { it = dtcs_.erase(it); }
+        else { ++it; }
+    }
+
+    // Set profile DTCs
+    for (size_t i = 0; i < profile->active_dtcs.size(); i++) {
+        std::string desc = (i < profile->dtc_descriptions.size())
+            ? profile->dtc_descriptions[i] : "Profile fault";
+        setDTC(profile->active_dtcs[i], desc, false);
+    }
+
+    return true;
 }
 
 } // namespace ecumult
