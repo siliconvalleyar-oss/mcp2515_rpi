@@ -22,6 +22,7 @@ mcp2515_rpi2w/
 ├── docker/                     # Dockerfile + entrypoint
 ├── docs/                       # OpenAPI 3.0 spec, connection diagram
 ├── examples/                   # Python client, bash test commands
+├── scripts/                    # Utility scripts (install, build, deploy, fuzz, diag)
 └── src/
     ├── main.cpp                # Entry point (CAN, simulation, API threads)
     ├── core/                   # can_manager, protocol_router, session_manager, security
@@ -45,6 +46,18 @@ make -j4                # Parallel build
 make clean              # Remove build/
 make info               # Show compiler, flags, source count
 make test               # Build test binary (requires Catch2 for ARM)
+```
+
+## Scripts
+
+```bash
+scripts/install_deps.sh    # Install toolchain + dependencies + vcan
+scripts/setup_can.sh       # Configure CAN interface (vcan/can0/status)
+scripts/build.sh           # Build with flags: -n (native), -d (debug), -t (tests)
+scripts/deploy.sh          # Deploy to remote Raspberry Pi via SSH
+scripts/run_tests.sh       # Compile & run Catch2 tests
+scripts/fuzz.sh            # CAN fuzzing (random OBD2/UDS frames)
+scripts/diag.sh            # Interactive CAN diagnostic client
 ```
 
 ## Key Architecture Rules
