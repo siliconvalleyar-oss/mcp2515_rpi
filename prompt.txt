@@ -1,0 +1,174 @@
+Necesito un sistema completo, escalable y profesional que emule ECUs de múltiples marcas de vehículos (Chevrolet/GM, Ford, Toyota, BMW, Volkswagen/Audi, Mercedes-Benz, Honda, Nissan, Hyundai/Kia) usando Raspberry Pi + MCP2515.
+
+El sistema debe escribirse en C++17/20 (NO Python). Debe responder a TODOS los comandos de diagnóstico como si fuera un vehículo real, soportando TODOS los modos y servicios OBD2/UDS.
+
+═══════════════════════════════════════════════════════════════
+1. ARQUITECTURA DEL SISTEMA (Escalable por diseño en C++)
+═══════════════════════════════════════════════════════════════
+
+Estructura de directorios:
+├── core/
+│   ├── can_manager.hpp/cpp     # Gestión del bus CAN (SocketCAN)
+│   ├── protocol_router.hpp/cpp # Enrutador de protocolos por marca
+│   ├── session_manager.hpp/cpp # Manejo de sesiones UDS
+│   └── security.hpp/cpp        # Seed/Key algorithms por marca
+├── manufacturers/
+│   ├── base.hpp/cpp            # Clase base abstracta para todas las marcas
+│   ├── chevrolet.hpp/cpp       # GM/GMLAN específico
+│   ├── ford.hpp/cpp            # Ford MS-CAN/HS-CAN
+│   ├── toyota.hpp/cpp          # Toyota Mode 21/22
+│   ├── bmw.hpp/cpp             # BMW DCAN/UDS
+│   ├── volkswagen.hpp/cpp      # VW UDS/Audi
+│   ├── mercedes.hpp/cpp        # Mercedes Star Diagnostics
+│   ├── honda.hpp/cpp           # Honda HDS
+│   └── nissan.hpp/cpp          # Nissan Consult
+├── database/
+│   ├── db_manager.hpp/cpp      # SQLite3 wrapper
+│   ├── migrations.hpp/cpp      # Migraciones de esquema
+│   └── seed_data.hpp/cpp       # Datos iniciales (constexpr o SQL)
+├── protocols/
+│   ├── obd2_standard.hpp/cpp   # SAE J1979 (Modos 01-0A)
+│   ├── gmlan.hpp/cpp           # GM Mode 22 específico
+│   ├── uds.hpp/cpp             # ISO 14229 (UDS)
+│   ├── kwp2000.hpp/cpp         # ISO 14230 (KWP2000)
+│   └── can_tp.hpp/cpp          # ISO 15765-2 (Transporte)
+├── diagnostics/
+│   ├── dtc_manager.hpp/cpp     # Gestión de códigos de fallo
+│   ├── freeze_frame.hpp/cpp    # Fotogramas congelados
+│   ├── readiness.hpp/cpp       # Monitores de preparación
+│   ├── vin_decoder.hpp/cpp     # Decodificación VIN por marca
+│   └── calibration.hpp/cpp     # Calibraciones/CVNs
+├── simulation/
+│   ├── driving_cycle.hpp/cpp   # Perfiles de conducción
+│   ├── sensor_simulator.hpp/cpp # Simulación de sensores
+│   ├── fault_injector.hpp/cpp  # Inyección de fallos bajo demanda
+│   └── environment.hpp/cpp     # Condiciones ambientales
+├── api/
+│   ├── rest_api.hpp/cpp        # REST API (con Crow / oat++ / uWebSockets)
+│   ├── websocket.hpp/cpp       # WebSocket para tiempo real
+│   └── grpc_server.hpp/cpp     # gRPC para integración profesional (opcional)
+├── security/
+│   ├── seed_key.hpp/cpp        # Algoritmos seed/key (Marca 0x27)
+│   ├── access_control.hpp/cpp  # Niveles de acceso
+│   └── secure_comm.hpp/cpp     # Comunicación segura
+├── logging/
+│   ├── can_logger.hpp/cpp      # Logging completo de CAN (spdlog)
+│   ├── metrics_exporter.hpp/cpp # Exportación a Prometheus (prometheus-cpp)
+│   └── replay_analyzer.hpp/cpp # Análisis de tráfico grabado
+├── tests/
+│   ├── test_all_modes.cpp      # Prueba todos los modos (Catch2 o GTest)
+│   ├── test_manufacturers.cpp  # Validación por marca
+│   └── fuzzing_suite.cpp       # Suite de fuzzing
+├── CMakeLists.txt              # Build system
+├── config.json                 # Configuración (bitrate, marcas, etc.)
+└── main.cpp                    # Punto de entrada (hilos CAN, API, simulación)
+
+═══════════════════════════════════════════════════════════════
+2. PROTOCOLOS Y MODOS COMPLETOS A IMPLEMENTAR
+═══════════════════════════════════════════════════════════════
+
+(OBD2, UDS, KWP2000, GMLAN, Ford, Toyota, BMW, VW/Audi, Mercedes, Honda, Nissan)
+→ Ídem al prompt original, pero todo implementado en C++ con estructuras de datos eficientes.
+
+═══════════════════════════════════════════════════════════════
+3. SETEOS COMPLETOS (TODAS LAS CONFIGURACIONES POSIBLES)
+═══════════════════════════════════════════════════════════════
+
+→ Ídem al original, manejados mediante archivo JSON + sobreescritura por API.
+
+═══════════════════════════════════════════════════════════════
+4. COMPATIBILIDAD CON FreeBUF y OpenCode
+═══════════════════════════════════════════════════════════════
+
+El núcleo en C++ expone una API REST y WebSocket. Esto permite que las herramientas en Python de FreeBUF/OpenCode (fuzzing, replay, etc.) se comuniquen con el emulador vía HTTP/WS. Se proporcionarán scripts de ejemplo en Python que llaman a la API del emulador C++.
+
+Alternativamente, se puede compilar el emulador como biblioteca y crear bindings Python (pybind11) para que las herramientas de FreeBUF/OpenCode llamen directamente a funciones C++.
+
+Requerimiento: Documentar ambos modos de integración.
+
+═══════════════════════════════════════════════════════════════
+5. BASE DE DATOS MAESTRA (SQLite3 con schema)
+═══════════════════════════════════════════════════════════════
+
+→ Las mismas tablas definidas en SQL (CREATE TABLE...). En C++ se usará SQLiteCpp o sqlite3 nativo.
+
+═══════════════════════════════════════════════════════════════
+6. CÓDIGO REQUERIDO (Estructura completa en C++)
+═══════════════════════════════════════════════════════════════
+
+Archivo principal: main.cpp
+- Inicializa hilos (CAN RX/TX, simulación, API REST).
+- Lee configuración (config.json).
+- Selecciona el fabricante activo (puede cambiarse vía API).
+- Enruta comandos CAN a la implementación específica de la marca.
+- Registra métricas y logs.
+
+Clase base: manufacturers/BaseManufacturer (abstracta)
+- Métodos virtuales puros: handleCanFrame(const can_frame&), getDTCs(), clearDTCs(), startSecurityAccess(), etc.
+- Implementación común de OBD2 estándar (modos 01-0A) usando tablas de PIDs.
+- Gestión de sesiones UDS (ISO 14229) con temporizadores.
+- Framework de seed/key (algoritmos configurables por marca).
+
+Implementación por marca (8 pares .hpp/.cpp):
+- ChevroletGM: hereda de BaseManufacturer, añade Mode 22 (200+ DIDs), security access GM.
+- Ford: MS-CAN switching, PATS, Ford-specific PIDs.
+- Toyota: Mode 21, Mode 27 Toyota, smart key.
+- BMW: UDS completo, DCAN, respuesta a EDIABAS/INPA.
+- Volkswagen: UDS VW, adaptation channels, long coding.
+- Mercedes: Star Diagnostics, UDS Mercedes, DAS emulation.
+- Honda: HDS protocol, immobilizer.
+- Nissan: Consult II/III, NATS.
+
+API REST (usando Crow / oat++):
+- GET /vehicles → lista modelos (JSON)
+- POST /select → selecciona marca/modelo (JSON)
+- GET /current → estado actual (marca, parámetros simulados, DTCs activos)
+- POST /inject_fault → inyecta DTC
+- POST /clear_faults → borra DTCs
+- POST /set_parameter → cambia valor de un sensor (ej. RPM, temp)
+- GET /diagnostics → reporte completo (DTCs, freeze frames, readiness)
+- POST /start_recording → comienza grabación de tráfico CAN a archivo
+- POST /replay → reproduce tráfico grabado desde archivo
+- GET /metrics → métricas Prometheus (exposición en /metrics)
+- POST /fuzz_start → inicia fuzzing (envío aleatorio de tramas)
+- GET /logs → descarga logs (spdlog)
+
+WebSocket:
+- Canal para enviar actualizaciones en tiempo real de sensores (RPM, velocidad, temperatura, etc.) a clientes web.
+
+Base de datos:
+- SQLite3 con las tablas especificadas.
+- Inicialización con seed data para todas las marcas (vehículos, PIDs, DTCs, perfiles de simulación).
+- Uso de SQLiteCpp o sqlite3 nativo con wrappers modernos.
+
+Logging y métricas:
+- spdlog (log rotativo, niveles: debug, info, error).
+- prometheus-cpp (endpoint /metrics).
+
+Build system:
+- CMake con detección de dependencias: libsocketcan, sqlite3, Crow, nlohmann/json, spdlog, prometheus-cpp (opcional), pthread.
+
+Instalación y despliegue:
+- Script de instalación (bash): install_multi_emulator.sh
+  - Compila el proyecto con CMake.
+  - Configura SocketCAN (sudo ip link set can0 up type can bitrate 500000).
+  - Crea servicio systemd para arranque automático.
+  - Genera configuración inicial config.json.
+
+═══════════════════════════════════════════════════════════════
+7. ENTREGABLES ESPERADOS
+═══════════════════════════════════════════════════════════════
+
+✅ Código fuente completo en C++17 (headers + implementación).
+✅ Archivo CMakeLists.txt funcional.
+✅ Script SQL con seed data (o archivo .sqlite pregenerado).
+✅ Diagrama de conexiones (ASCII o imagen).
+✅ README.md con instrucciones: compilar, instalar dependencias, configurar, ejecutar.
+✅ Script de pruebas automatizadas usando Catch2 o GTest.
+✅ Archivo docker/Dockerfile para contenedor (opcional).
+✅ Ejemplos de comandos de prueba por marca (bash usando cansend o curl a la API).
+✅ Documentación API REST (formato OpenAPI 3.0 en YAML/JSON).
+
+El sistema debe ser funcional, probado, profesional y permitir cambiar entre marcas en tiempo real sin reiniciar el proceso.
+
+No se debe usar Python en el núcleo. Toda la lógica de emulación, gestión de CAN y API será en C++.
